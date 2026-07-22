@@ -1,8 +1,12 @@
-name: Manuelles Release (Plugin-Assets)
+name: Manuelles Release (vorhandene ZIPs)
 
 on:
   workflow_dispatch:
     inputs:
+      changelog:
+        description: "Changelog-Text für dieses Release"
+        required: true
+        type: string
       draft:
         description: "Als Entwurf erstellen?"
         required: false
@@ -36,28 +40,26 @@ jobs:
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Relevante Dateien einsammeln und zippen
-        id: zip
+      - name: Vorhandene ZIP-Dateien suchen
+        id: find
         run: |
           set -e
-          STAGING="staging"
-          mkdir -p "$STAGING"
-
-          find . -type f \( \
-              -iname "*.wdx" -o -iname "*.wcx" -o -iname "*.wfx" \
-              -o -iname "*.wdx64" -o -iname "*.wcx64" -o -iname "*.wfx64" \
-              -o -iname "*.zip" \
-              -o -iname "readme*" \
-              -o -iname "license*" -o -iname "lizenz*" \
-            \) ! -path "./staging/*" -exec cp -v {} "$STAGING"/ \;
-
-          ASSET_NAME="${{ steps.meta.outputs.tag_name }}.zip"
-          (cd "$STAGING" && zip -r "../$ASSET_NAME" .)
-          echo "asset_path=$ASSET_NAME" >> "$GITHUB_OUTPUT"
+          mapfile -t ZIPS < <(find . -type f -iname "*.zip" ! -path "./.git/*")
+          if [ ${#ZIPS[@]} -eq 0 ]; then
+            echo "Keine ZIP-Dateien im Repository gefunden – Abbruch." >&2
+            exit 1
+          fi
+          printf '%s\n' "${ZIPS[@]}"
+          {
+            echo "assets<<EOF"
+            printf '%s\n' "${ZIPS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Release erstellen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANGELOG: ${{ inputs.changelog }}
         run: |
           FLAGS=()
           if [ "${{ inputs.draft }}" = "true" ]; then
@@ -68,7 +70,8 @@ jobs:
           fi
 
           gh release create "${{ steps.meta.outputs.tag_name }}" \
-            "${{ steps.zip.outputs.asset_path }}" \
+            ${{ steps.find.outputs.assets }} \
             --title "${{ steps.meta.outputs.project_name }} ${{ steps.meta.outputs.timestamp }}" \
+            --notes "$CHANGELOG" \
             --generate-notes \
             "${FLAGS[@]}"
