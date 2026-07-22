@@ -1,4 +1,4 @@
-name: Manuelles Release (vorhandene ZIPs)
+name: Manuelles Release (vorhandene Assets + optionales Source-Archiv)
 
 on:
   workflow_dispatch:
@@ -40,21 +40,42 @@ jobs:
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Vorhandene ZIP-Dateien suchen
+      # Plugin-Dateien, Readme, License und vorhandene ZIPs einzeln finden
+      - name: Vorhandene Assets suchen
         id: find
         run: |
           set -e
-          mapfile -t ZIPS < <(find . -type f -iname "*.zip" ! -path "./.git/*")
-          if [ ${#ZIPS[@]} -eq 0 ]; then
-            echo "Keine ZIP-Dateien im Repository gefunden – Abbruch." >&2
+          mapfile -t ASSETS < <(find . -type f \( \
+              -iname "*.wdx" -o -iname "*.wcx" -o -iname "*.wfx" \
+              -o -iname "*.wdx64" -o -iname "*.wcx64" -o -iname "*.wfx64" \
+              -o -iname "*.zip" \
+              -o -iname "readme*" \
+              -o -iname "license*" -o -iname "lizenz*" \
+            \) ! -path "./.git/*" ! -path "./source/*")
+
+          if [ ${#ASSETS[@]} -eq 0 ]; then
+            echo "Keine passenden Dateien im Repository gefunden – Abbruch." >&2
             exit 1
           fi
-          printf '%s\n' "${ZIPS[@]}"
+          printf '%s\n' "${ASSETS[@]}"
           {
             echo "assets<<EOF"
-            printf '%s\n' "${ZIPS[@]}"
+            printf '%s\n' "${ASSETS[@]}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # Nur wenn der Ordner "source" existiert, wird daraus ein Archiv erzeugt
+      - name: Source-Archiv erstellen (falls Ordner vorhanden)
+        id: source
+        run: |
+          if [ -d "source" ]; then
+            SOURCE_ZIP="${{ steps.meta.outputs.tag_name }}-source.zip"
+            (cd source && zip -r "../$SOURCE_ZIP" .)
+            echo "source_asset=$SOURCE_ZIP" >> "$GITHUB_OUTPUT"
+          else
+            echo "Kein 'source'-Ordner gefunden, überspringe Source-Archiv."
+            echo "source_asset=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Release erstellen
         env:
@@ -71,6 +92,7 @@ jobs:
 
           gh release create "${{ steps.meta.outputs.tag_name }}" \
             ${{ steps.find.outputs.assets }} \
+            ${{ steps.source.outputs.source_asset }} \
             --title "${{ steps.meta.outputs.project_name }} ${{ steps.meta.outputs.timestamp }}" \
             --notes "$CHANGELOG" \
             --generate-notes \
