@@ -1,0 +1,74 @@
+name: Manuelles Release (Plugin-Assets)
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Als Entwurf erstellen?"
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: "Als Pre-Release markieren?"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository vollständig auschecken
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Projektname und Zeitstempel ermitteln
+        id: meta
+        run: |
+          PROJECT_NAME="${{ github.event.repository.name }}"
+          TIMESTAMP="$(date -u +'%Y%m%d-%H%M%S')"
+          TAG_NAME="${PROJECT_NAME}-${TIMESTAMP}"
+          echo "project_name=$PROJECT_NAME" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Relevante Dateien einsammeln und zippen
+        id: zip
+        run: |
+          set -e
+          STAGING="staging"
+          mkdir -p "$STAGING"
+
+          find . -type f \( \
+              -iname "*.wdx" -o -iname "*.wcx" -o -iname "*.wfx" \
+              -o -iname "*.wdx64" -o -iname "*.wcx64" -o -iname "*.wfx64" \
+              -o -iname "*.zip" \
+              -o -iname "readme*" \
+              -o -iname "license*" -o -iname "lizenz*" \
+            \) ! -path "./staging/*" -exec cp -v {} "$STAGING"/ \;
+
+          ASSET_NAME="${{ steps.meta.outputs.tag_name }}.zip"
+          (cd "$STAGING" && zip -r "../$ASSET_NAME" .)
+          echo "asset_path=$ASSET_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Release erstellen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FLAGS=()
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            FLAGS+=(--draft)
+          fi
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            FLAGS+=(--prerelease)
+          fi
+
+          gh release create "${{ steps.meta.outputs.tag_name }}" \
+            "${{ steps.zip.outputs.asset_path }}" \
+            --title "${{ steps.meta.outputs.project_name }} ${{ steps.meta.outputs.timestamp }}" \
+            --generate-notes \
+            "${FLAGS[@]}"
