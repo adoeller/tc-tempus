@@ -41,42 +41,34 @@ jobs:
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Vorhandene Assets suchen
-        id: find
         run: |
           set -e
-          mapfile -t ASSETS < <(find . -type f \( \
+          find . -type f \( \
               -iname "*.wdx" -o -iname "*.wcx" -o -iname "*.wfx" \
               -o -iname "*.wdx64" -o -iname "*.wcx64" -o -iname "*.wfx64" \
               -o -iname "*.zip" \
               -o -iname "readme*" \
               -o -iname "license*" -o -iname "lizenz*" \
-            \) ! -path "./.git/*" ! -path "./source/*")
+            \) ! -path "./.git/*" ! -path "./source/*" > assets.txt
 
-          if [ ${#ASSETS[@]} -eq 0 ]; then
+          if [ ! -s assets.txt ]; then
             echo "Keine passenden Dateien im Repository gefunden – Abbruch." >&2
             exit 1
           fi
-          printf '%s\n' "${ASSETS[@]}"
-          {
-            echo "assets<<EOF"
-            printf '%s\n' "${ASSETS[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          cat assets.txt
 
       - name: Source-Archiv erstellen (falls Ordner vorhanden)
-        id: source
         run: |
           if [ -d "source" ]; then
             SOURCE_ZIP="${{ steps.meta.outputs.tag_name }}-source.zip"
             (cd source && zip -r "../$SOURCE_ZIP" .)
-            echo "source_asset=$SOURCE_ZIP" >> "$GITHUB_OUTPUT"
+            echo "$SOURCE_ZIP" > source_asset.txt
           else
             echo "Kein 'source'-Ordner gefunden, überspringe Source-Archiv."
-            echo "source_asset=" >> "$GITHUB_OUTPUT"
+            : > source_asset.txt
           fi
 
       - name: Release-Notes zusammenbauen
-        id: notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHANGELOG: ${{ inputs.changelog }}
@@ -95,12 +87,13 @@ jobs:
             echo "$AUTO_NOTES"
           } > release_notes.md
 
-          echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
-
       - name: Release erstellen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          mapfile -t ASSETS < assets.txt
+          mapfile -t SOURCE_ASSET < source_asset.txt
+
           FLAGS=()
           if [ "${{ inputs.draft }}" = "true" ]; then
             FLAGS+=(--draft)
@@ -110,8 +103,8 @@ jobs:
           fi
 
           gh release create "${{ steps.meta.outputs.tag_name }}" \
-            ${{ steps.find.outputs.assets }} \
-            ${{ steps.source.outputs.source_asset }} \
+            "${ASSETS[@]}" \
+            "${SOURCE_ASSET[@]}" \
             --title "${{ steps.meta.outputs.project_name }} ${{ steps.meta.outputs.timestamp }}" \
-            --notes-file "${{ steps.notes.outputs.notes_file }}" \
+            --notes-file "release_notes.md" \
             "${FLAGS[@]}"
