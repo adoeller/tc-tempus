@@ -40,7 +40,6 @@ jobs:
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
-      # Plugin-Dateien, Readme, License und vorhandene ZIPs einzeln finden
       - name: Vorhandene Assets suchen
         id: find
         run: |
@@ -64,7 +63,6 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # Nur wenn der Ordner "source" existiert, wird daraus ein Archiv erzeugt
       - name: Source-Archiv erstellen (falls Ordner vorhanden)
         id: source
         run: |
@@ -77,10 +75,31 @@ jobs:
             echo "source_asset=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Release erstellen
+      - name: Release-Notes zusammenbauen
+        id: notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          AUTO_NOTES=$(gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ steps.meta.outputs.tag_name }}" \
+            --jq .body 2>/dev/null || echo "")
+
+          {
+            echo "$CHANGELOG"
+            echo ""
+            echo "---"
+            echo ""
+            echo "$AUTO_NOTES"
+          } > release_notes.md
+
+          echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Release erstellen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           FLAGS=()
           if [ "${{ inputs.draft }}" = "true" ]; then
@@ -94,6 +113,5 @@ jobs:
             ${{ steps.find.outputs.assets }} \
             ${{ steps.source.outputs.source_asset }} \
             --title "${{ steps.meta.outputs.project_name }} ${{ steps.meta.outputs.timestamp }}" \
-            --notes "$CHANGELOG" \
-            --generate-notes \
+            --notes-file "${{ steps.notes.outputs.notes_file }}" \
             "${FLAGS[@]}"
